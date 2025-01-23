@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:chess/chess.dart' as chess;
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 class ChessGamePage extends StatefulWidget {
   @override
@@ -8,14 +9,33 @@ class ChessGamePage extends StatefulWidget {
 
 class _ChessGamePageState extends State<ChessGamePage> {
   final chess.Chess _chess = chess.Chess();
+  final _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
   int selectedSquare = -1;
   List<String> validMoves = [];
+  bool isPlayerOne = true; // Change this for testing
+
+  @override
+  void initState() {
+    super.initState();
+    _channel.stream.listen((message) {
+      final move = Uri.splitQueryString(message);
+      if (_chess.move(move) != null) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _channel.sink.close();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Chess Game'),
+        title: Text('Chess Game (Player ${isPlayerOne ? "1" : "2"})'),
         actions: [
           IconButton(
             icon: Icon(Icons.refresh),
@@ -39,7 +59,6 @@ class _ChessGamePageState extends State<ChessGamePage> {
                   final square = '$file$rank';
                   final piece = _chess.get(square);
 
-                  // Check if square should be highlighted
                   bool isHighlighted = validMoves.contains(square);
 
                   return GestureDetector(
@@ -94,65 +113,38 @@ class _ChessGamePageState extends State<ChessGamePage> {
       selectedSquare = -1;
       validMoves = [];
     });
+    _channel.sink.add(Uri.encodeQueryComponent('reset=true'));
   }
 
-void _onSquareTapped(int index, String square) {
-  setState(() {
-    if (selectedSquare == -1) {
-      // Select a square
-      selectedSquare = index;
-
-      // Log the piece on the square
-      final piece = _chess.get(square);
-      if (piece == null) {
-        print('No piece on $square'); // Debugging output
-        validMoves = [];
-        return;
-      }
-
-      print('Selected piece: ${piece.type} at $square');
-
-      // Fetch valid moves for the selected square
-      final moves = _chess.moves({'square': square});
-      print('Moves returned for $square: $moves'); // Debugging output
-
-      // Extract valid move destinations and strip piece notation
-      validMoves = moves
-          .map<String>((move) {
+  void _onSquareTapped(int index, String square) {
+    if ((_chess.turn == chess.Color.WHITE && isPlayerOne) ||
+        (_chess.turn == chess.Color.BLACK && !isPlayerOne)) {
+      setState(() {
+        if (selectedSquare == -1) {
+          selectedSquare = index;
+          final moves = _chess.moves({'square': square});
+          validMoves = moves.map((move) {
             if (move is String) {
-              // Strip any leading piece notation (e.g., 'N' from 'Na3')
               return move.replaceAll(RegExp(r'^[NBRQK]'), '');
             } else if (move is Map<String, dynamic> && move.containsKey('to')) {
               return move['to'] as String;
             }
             return '';
-          })
-          .where((move) => move.isNotEmpty)
-          .toList();
-
-      print('Valid moves extracted for $square: $validMoves'); // Debugging output
-    } else {
-      // Attempt to make a move
-      final fromRank = 8 - selectedSquare ~/ 8;
-      final fromFile = String.fromCharCode(97 + selectedSquare % 8);
-      final fromSquare = '$fromFile$fromRank';
-
-      print('Attempting move from $fromSquare to $square'); // Debugging output
-
-      if (_chess.move({'from': fromSquare, 'to': square}) != null) {
-        print('Move successful from $fromSquare to $square'); // Debugging
-        selectedSquare = -1;
-        validMoves = [];
-      } else {
-        print('Move failed from $fromSquare to $square'); // Debugging
-        selectedSquare = -1;
-        validMoves = [];
-      }
+          }).where((move) => move.isNotEmpty).toList();
+        } else {
+          final fromRank = 8 - selectedSquare ~/ 8;
+          final fromFile = String.fromCharCode(97 + selectedSquare % 8);
+          final fromSquare = '$fromFile$fromRank';
+          if (_chess.move({'from': fromSquare, 'to': square}) != null) {
+            _channel.sink.add(Uri.encodeQueryComponent(
+                'from=$fromSquare&to=$square'));
+          }
+          selectedSquare = -1;
+          validMoves = [];
+        }
+      });
     }
-  });
-}
-
-
+  }
 
   String _getPieceSymbol(chess.Piece piece) {
     final symbols = {
